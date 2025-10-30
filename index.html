@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Consulta NFC-e SEFAZ PB</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: Arial, sans-serif; }
+        body { background: #f5f7fa; padding: 20px; }
+        .container { max-width: 1000px; margin: 0 auto; }
+        header { background: #2c3e50; color: white; padding: 20px; border-radius: 8px 8px 0 0; }
+        .card { background: white; padding: 25px; margin-bottom: 20px; border-radius: 0 0 8px 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        textarea { width: 100%; height: 150px; padding: 15px; border: 1px solid #ddd; border-radius: 4px; margin: 10px 0; font-family: monospace; }
+        .btn { background: #27ae60; color: white; border: none; padding: 12px 25px; border-radius: 4px; cursor: pointer; margin: 5px; }
+        .btn:hover { background: #219955; }
+        .btn-clear { background: #e74c3c; }
+        .btn-clear:hover { background: #c0392b; }
+        .loading { display: none; text-align: center; padding: 20px; }
+        .spinner { border: 4px solid #f3f3f3; border-top: 4px solid #3498db; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .result-item { border: 1px solid #ddd; padding: 15px; margin: 10px 0; border-radius: 4px; background: #f9f9f9; }
+        .success { border-left: 4px solid #27ae60; }
+        .error { border-left: 4px solid #e74c3c; }
+        .detail { margin: 5px 0; }
+        .label { font-weight: bold; color: #555; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Consulta NFC-e SEFAZ PB</h1>
+            <p>Consulta em lote - Sem necessidade de instalação</p>
+        </header>
+        
+        <div class="card">
+            <h2>Consultar NFC-e em Lote</h2>
+            <p><strong>Instruções:</strong> Cole as chaves NFC-e separadas por ponto e vírgula (;) ou importe de arquivo TXT</p>
+            
+            <textarea id="chaves" placeholder="Exemplo: 24210607364602000133650010000012341000012345;24210607364602000133650010000012351000012346"></textarea>
+            
+            <div>
+                <input type="file" id="fileInput" accept=".txt" style="margin: 10px 0;">
+                <button class="btn" onclick="consultarNFCe()">Consultar NFC-e</button>
+                <button class="btn btn-clear" onclick="limpar()">Limpar</button>
+            </div>
+        </div>
+
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <p>Consultando NFC-e's, aguarde...</p>
+            <div id="progress"></div>
+        </div>
+
+        <div id="results"></div>
+    </div>
+
+    <script>
+        // Carregar arquivo TXT
+        document.getElementById('fileInput').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                document.getElementById('chaves').value = e.target.result;
+            };
+            reader.readAsText(file);
+        });
+
+        function limpar() {
+            document.getElementById('chaves').value = '';
+            document.getElementById('results').innerHTML = '';
+        }
+
+        async function consultarNFCe() {
+            const chaves = document.getElementById('chaves').value.trim();
+            if (!chaves) {
+                alert('Por favor, insira pelo menos uma chave NFC-e');
+                return;
+            }
+            
+            const chavesArray = chaves.split(';').map(chave => chave.trim()).filter(chave => chave);
+            
+            if (chavesArray.length === 0) {
+                alert('Nenhuma chave válida encontrada. Verifique o formato (separadas por ;)');
+                return;
+            }
+
+            // Mostrar loading
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('results').innerHTML = '';
+
+            try {
+                await processarConsultas(chavesArray);
+            } catch (error) {
+                console.error('Erro:', error);
+                alert('Erro ao consultar NFC-e. Verifique o console para detalhes.');
+            } finally {
+                document.getElementById('loading').style.display = 'none';
+            }
+        }
+
+        async function processarConsultas(chavesArray) {
+            const resultsDiv = document.getElementById('results');
+            let successCount = 0;
+            let errorCount = 0;
+
+            for (let i = 0; i < chavesArray.length; i++) {
+                const chave = chavesArray[i];
+                
+                // Atualizar progresso
+                document.getElementById('progress').innerHTML = 
+                    `Processando ${i + 1} de ${chavesArray.length} - ${successCount} sucessos, ${errorCount} erros`;
+
+                try {
+                    const resultado = await consultarChave(chave);
+                    
+                    const resultItem = document.createElement('div');
+                    resultItem.className = `result-item ${resultado.status === 'OK' ? 'success' : 'error'}`;
+                    
+                    resultItem.innerHTML = `
+                        <h3>NFC-e ${i + 1} - ${resultado.status}</h3>
+                        <div class="detail"><span class="label">Chave:</span> ${resultado.chave}</div>
+                        <div class="detail"><span class="label">Número:</span> ${resultado.numeroCupom || 'N/A'}</div>
+                        <div class="detail"><span class="label">Valor:</span> ${resultado.valor || 'N/A'}</div>
+                        <div class="detail"><span class="label">Data:</span> ${resultado.dataHoraEmissao || 'N/A'}</div>
+                        <div class="detail"><span class="label">Situação:</span> ${resultado.situacao || 'N/A'}</div>
+                        ${resultado.mensagem ? `<div class="detail"><span class="label">Mensagem:</span> ${resultado.mensagem}</div>` : ''}
+                    `;
+                    
+                    resultsDiv.appendChild(resultItem);
+                    
+                    if (resultado.status === 'OK') successCount++;
+                    else errorCount++;
+
+                } catch (error) {
+                    errorCount++;
+                    const resultItem = document.createElement('div');
+                    resultItem.className = 'result-item error';
+                    resultItem.innerHTML = `
+                        <h3>NFC-e ${i + 1} - ERRO</h3>
+                        <div class="detail"><span class="label">Chave:</span> ${chave}</div>
+                        <div class="detail"><span class="label">Erro:</span> ${error.message}</div>
+                    `;
+                    resultsDiv.appendChild(resultItem);
+                }
+
+                // Aguardar entre consultas
+                if (i < chavesArray.length - 1) {
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                }
+            }
+
+            document.getElementById('progress').innerHTML = 
+                `Consulta finalizada: ${successCount} sucessos, ${errorCount} erros`;
+        }
+
+        async function consultarChave(chave) {
+            // Usar proxy público para evitar CORS
+            const proxies = [
+                'https://api.allorigins.win/raw?url=',
+                'https://corsproxy.io/?',
+                'https://api.codetabs.com/v1/proxy?quest='
+            ];
+
+            const urlSEFAZ = `https://www.sefaz.pb.gov.br/servirtual/documentos-fiscais/nfc-e/consultar-nfc-e?chave=${encodeURIComponent(chave)}`;
+            
+            for (const proxy of proxies) {
+                try {
+                    const response = await fetch(proxy + encodeURIComponent(urlSEFAZ), {
+                        method: 'GET',
+                        headers: { 'Accept': 'text/html' }
+                    });
+                    
+                    if (!response.ok) continue;
+                    
+                    const html = await response.text();
+                    return parsearResposta(html, chave);
+                    
+                } catch (error) {
+                    console.warn(`Proxy falhou, tentando próximo...`);
+                    continue;
+                }
+            }
+            
+            throw new Error('Todos os proxies falharam. Tente novamente.');
+        }
+
+        function parsearResposta(html, chave) {
+            // Verificar se não foi encontrada
+            if (html.includes('não encontrada') || html.includes('não localizada') || html.includes('inexistente')) {
+                return {
+                    chave: chave,
+                    status: 'ERRO',
+                    situacao: 'Não encontrada',
+                    mensagem: 'NFC-e não encontrada na base da SEFAZ'
+                };
+            }
+
+            // Extrair dados (exemplo simplificado)
+            const valorMatch = html.match(/R\$\s*[\d.,]+/);
+            const dataMatch = html.match(/\d{2}\/\d{2}\/\d{4}\s+\d{2}:\d{2}:\d{2}/);
+            
+            if (valorMatch && dataMatch) {
+                return {
+                    chave: chave,
+                    numeroCupom: chave.substring(25, 34),
+                    valor: valorMatch[0],
+                    dataHoraEmissao: dataMatch[0],
+                    situacao: 'Autorizada',
+                    status: 'OK'
+                };
+            } else {
+                return {
+                    chave: chave,
+                    status: 'AVISO',
+                    mensagem: 'NFC-e encontrada, mas dados não puderam ser extraídos completamente'
+                };
+            }
+        }
+    </script>
+</body>
+</html>
